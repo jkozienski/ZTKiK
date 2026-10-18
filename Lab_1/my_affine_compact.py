@@ -1,17 +1,6 @@
 # -*- coding: utf-8 -*-
 """
 Lamanie szyfru afinicznego:  szyfrowanie  y = (a*x + b) mod 26
-
-Metoda: NIE sprawdzamy wszystkich kluczy (to byłby brute force).
-Zamiast tego robimy zgadywanie na podstawie czestosci liter i
-rozwiazujemy UKLAD ROWNAN, z ktorego wychodza a i b.
-
-Przyklad:
-  zgadujemy: litera E (x=4)  w szyfrogramie to R (y=17)
-  zgadujemy: litera I (x=8)  w szyfrogramie to D (y=3)
-  Uklad:   a*4 + b = 17  (mod 26)
-           a*8 + b = 3   (mod 26)
-  Odejmujemy rownania i mamy rownanie tylko z "a", potem liczymy "b".
 """
 
 from math import gcd
@@ -21,7 +10,7 @@ from collections import Counter
 # 1. DANE: tekst do zlamania i tabela 2.1 (prawdopodobienstwa liter)
 # ----------------------------------------------------------------------
 
-CIPHERTEXT = """AVSC QAPC ZRC UZAPQ WU RAOLWVM, IVX RILH RWXEVXCP ZRWU SPIXLC-RAAX IVX SAJCPLWX  QY SRWLX ULCCFU AV. ZRCPC WU VA ANUZISLC NEZ MPCMAPY'U OAAX IVX AVC NIPC RWLL  ORCPCNY ZRC RIYUZISG- IVX PAAH-LCJCLLWVM OWVX, NPCX AV ZRC IZLIVZWS, SIV NC UZIYCX"""
+CIPHERTEXT = """GZAO WNGZ M PQSO, JQCJ WN QZ PJO UWQOP ZQCJP IEY, PJOBO KMI M PQZY IPMB ZMSOH NQN. NQN KMI IG ISMLL PJMP JO KMI MVBMQH JQI LQCJP KMI PGG KOME PG TO IOOZ. ODOBY ODOZQZC, PJO TQC IPMBI KGWLH CLGK TBQCJPLY, MZH NQN KGWLH JQHO TOJQZH M VLWVVY ALGWH"""
 
 ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 
@@ -167,6 +156,21 @@ def save_histogram_png(frequencies, filename="histogram.png"):
 # 3. GLOWNY PROGRAM
 # ----------------------------------------------------------------------
 
+# Szerokosci kolumn tabeli: hipoteza, uklad rownan, klucz, wynik, tekst
+COLUMN_WIDTHS = (10, 17, 12, 26, 51)
+
+
+def print_row(*cells):
+    """Drukuje jeden wiersz tabeli, kazda komorke dopelniona spacjami do szerokosci kolumny."""
+    padded = [str(cell).ljust(width) for cell, width in zip(cells, COLUMN_WIDTHS)]
+    print("  ".join(padded).rstrip())
+
+
+def print_header():
+    print_row("Hipoteza", "Układ równań", "Klucz", "Wynik", "Odszyfrowany tekst")
+    print("  ".join("-" * width for width in COLUMN_WIDTHS))
+
+
 def main():
     # --- Krok 1: czestosci liter w szyfrogramie ---
     letters = only_letters(CIPHERTEXT)
@@ -177,66 +181,70 @@ def main():
     print_histogram(frequencies)
     save_histogram_png(frequencies)
 
-    # Litery szyfrogramu od najczestszej do najrzadszej
-    cipher_letters_sorted = sorted(ALPHABET, key=lambda letter: frequencies[letter], reverse=True)
+    # 5 najczestszych liter szyfrogramu (od najczestszej)
+    top_cipher = sorted(ALPHABET, key=lambda letter: frequencies[letter], reverse=True)[:5]
+    print("\nNajczestsze litery szyfrogramu:", [(l, frequencies[l]) for l in top_cipher])
 
-    # Bierzemy po 5 najczestszych liter z kazdej strony
-    top_cipher = cipher_letters_sorted[:5]
-    top_english = ENGLISH_LETTERS[:5]
-    print("\nNajczestsze litery szyfrogramu:", top_cipher)
-    print("Najczestsze litery angielskie :", top_english)
+    # --- Krok 2: hipotezy  E -> c1,  T -> c2  i uklad rownan ---
+    x1 = letter_to_number("E")   # 4
+    x2 = letter_to_number("T")   # 19
+    THRESHOLD = 0.058            # powyzej tej oceny tekst uznajemy za sensowny
 
-    # --- Krok 2: hipotezy i uklad rownan ---
-    # Pierwsza hipoteza jest stala: najczestsza litera szyfrogramu to E.
-    x1 = letter_to_number(top_english[0])   # E = 4
-    y1 = letter_to_number(top_cipher[0])    # np. C = 2
+    print("\nOBLICZENIA PROWADZACE DO KLUCZA \n")
+    print_header()
 
-    # Druga hipoteze sprawdzamy dla roznych par (litera jawna -> litera szyfrogramu)
-    results = []    # tu zapisujemy poprawne klucze: (score, a, b)
-    checked = []    # zeby nie liczyc dwa razy tego samego klucza
+    results = []    # poprawne klucze: (score, a, b)
+    checked = set()
 
-    print("\nHIPOTEZY I WYNIKI:")
-    print("Hipoteza            a    b    ocena   poczatek tekstu / powod odrzucenia")
-    print("-" * 80)
+    for c1 in top_cipher:                  # E -> c1
+        for c2 in top_cipher:              # T -> c2
+            if c1 == c2:
+                continue
+            y1 = letter_to_number(c1)
+            y2 = letter_to_number(c2)
 
-    for cipher_letter in top_cipher[1:]:
-        for plain_letter in top_english[1:]:
-            x2 = letter_to_number(plain_letter)
-            y2 = letter_to_number(cipher_letter)
-            label = f"{top_english[0]}->{top_cipher[0]}, {plain_letter}->{cipher_letter}"
+            # Uklad:  a*x1 + b = y1,  a*x2 + b = y2   (mod 26)
+            # Odejmujemy: a*(x2 - x1) = (y2 - y1)  (mod 26)
+            a = solve_equation((x2 - x1) % 26, (y2 - y1) % 26)[0]
+            b = (y1 - a * x1) % 26
 
-            # Odejmujemy rownania:  a*(x1 - x2) = (y1 - y2)  (mod 26)
-            possible_a = solve_equation((x1 - x2) % 26, (y1 - y2) % 26)
+            hypothesis = f"E→{c1}, T→{c2}"
+            equations = f"{x1}a+b≡{y1}, {x2}a+b≡{y2}"
+            key = f"a={a}, b={b}"
 
-            for a in possible_a:
-                # a musi miec odwrotnosc mod 26, czyli gcd(a, 26) = 1
-                if gcd(a, 26) != 1:
-                    print(f"{label:<18} {a:>3}    -       -    odrzucony: gcd({a},26) != 1")
-                    continue
+            g = gcd(a, 26)
+            if g != 1:
+                print_row(hypothesis, equations, key, f"NIEPOPRAWNY (gcd({a},26)={g})", "")
+                continue
 
-                # Z pierwszego rownania: b = y1 - a*x1
-                b = (y1 - a * x1) % 26
+            plaintext = decrypt(letters, a, b)
+            score = score_text(plaintext)
+            verdict = "SENSOWNY" if score >= THRESHOLD else "bezsensowny"
+            print_row(hypothesis, equations, key, f"score={score:.4f} {verdict}", plaintext[:50]+ "…")
 
-                if (a, b) in checked:
-                    continue
-                checked.append((a, b))
-
-                plaintext = decrypt(letters, a, b)
-                score = score_text(plaintext)
+            if (a, b) not in checked:
+                checked.add((a, b))
                 results.append((score, a, b))
-                print(f"{label:<18} {a:>3} {b:>4}   {score:.4f}   {plaintext[:35]}")
 
     # --- Krok 3: wybor najlepszego klucza ---
-    results.sort(reverse=True)          # od najwyzszej oceny
+    results.sort(reverse=True)
     best_score, a, b = results[0]
+
+# 3 najlepiej dopasowane klucze (najwyzszy score) i tekst odszyfrowany kazdym z nich
+    print("\n3 NAJLEPIEJ DOPASOWANE KLUCZE")
+    for place, (score, key_a, key_b) in enumerate(results[:3], start=1):
+        print(f"\n{place}. a={key_a}, b={key_b}, score={score:.4f}")
+        print("   " + " ".join(decrypt(CIPHERTEXT, key_a, key_b).split()))
+
 
     print("\nWYBOR KLUCZA")
     print(f"a = {a}, b = {b}, odwrotnosc a = {modular_inverse(a, 26)}")
-    print(f"Ocena: {best_score:.4f} (drugi wynik: {results[1][0]:.4f})")
+    if len(results) > 1:
+        print(f"Ocena: {best_score:.4f} (drugi wynik: {results[1][0]:.4f})")
+    else:
+        print(f"Ocena: {best_score:.4f}")
 
-    print("\nTekst jawny bez spacji:")
-    print(decrypt(letters, a, b))
-    print("\nTekst jawny ze spacjami:")
+    print("\nTekst jawny:")
     print(" ".join(decrypt(CIPHERTEXT, a, b).split()))
 
 
